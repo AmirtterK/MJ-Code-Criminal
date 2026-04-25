@@ -55,7 +55,7 @@ function play(p: string, v: number) {
     activeProc.on('exit', () => { activeProc = null; });
 }
 
-function scream(ctx: vscode.ExtensionContext, t: string, o?: Clip) {
+function scream(ctx: vscode.ExtensionContext, t: 'error' | 'warning' | 'success', o?: Clip) {
     const now = Date.now();
     if (now - lastScream < 200 && !o) return;
     lastScream = now;
@@ -67,13 +67,11 @@ function scream(ctx: vscode.ExtensionContext, t: string, o?: Clip) {
     if (o) {
         c = o;
     } else if (t === 'error') {
-        const r = Math.random();
-        if (r < 0.25) c = ERRORS[0]; // Hee Hee
-        else if (r < 0.50) c = ERRORS[1]; // Hoooo
-        else if (r < 0.75) c = ERRORS[2]; // Ow
-        else c = ERRORS[3 + Math.floor(Math.random() * 5)]; // Others (5% each)
+        c = ERRORS[1]; // Hoooo (Ohhhhhh)
+    } else if (t === 'warning') {
+        c = ERRORS[3]; // Shamone (Jam Ohn)
     } else {
-        c = SUCCESSES[Math.floor(Math.random() * SUCCESSES.length)];
+        c = ERRORS[0]; // Hee Hee (Yee Hee)
     }
 
     const vol = cfg.get<number>('volume', 1.0);
@@ -81,36 +79,49 @@ function scream(ctx: vscode.ExtensionContext, t: string, o?: Clip) {
 
     vscode.window.setStatusBarMessage(`MJ: ${c.text}`, 5000);
     if (statusBar) {
-        statusBar.text = t === 'error' ? `$(error) MJ: ${c.label}` : `$(check) MJ: ${c.label}`;
+        if (t === 'error') statusBar.text = `$(error) MJ: ${c.label}`;
+        else if (t === 'warning') statusBar.text = `$(warning) MJ: ${c.label}`;
+        else statusBar.text = `$(check) MJ: ${c.label}`;
     }
 }
 
 let extCtx: vscode.ExtensionContext;
+let lastWarns = new Set<string>();
 
 function scan() {
     const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
     if (!cfg.get('enabled')) return;
 
-    const cur = new Set<string>();
-    let fresh = false;
+    const curErrs = new Set<string>();
+    const curWarns = new Set<string>();
+    let freshErr = false;
+    let freshWarn = false;
 
     vscode.workspace.textDocuments.forEach(d => {
         vscode.languages.getDiagnostics(d.uri).forEach(x => {
+            const k = `${d.uri.toString()}:${x.range.start.line}:${x.range.start.character}`;
             if (x.severity === vscode.DiagnosticSeverity.Error) {
-                const k = `${d.uri.toString()}:${x.range.start.line}:${x.range.start.character}`;
-                cur.add(k);
-                if (!lastUris.has(k)) fresh = true;
+                curErrs.add(k);
+                if (!lastUris.has(k)) freshErr = true;
+            } else if (x.severity === vscode.DiagnosticSeverity.Warning) {
+                curWarns.add(k);
+                if (!lastWarns.has(k)) freshWarn = true;
             }
         });
     });
 
-    if (fresh) {
+    if (freshErr) {
         if (diagTimer) clearTimeout(diagTimer);
         diagTimer = setTimeout(() => { scream(extCtx, 'error'); diagTimer = null; }, 200);
-    } else if (cur.size === 0 && lastUris.size > 0 && cfg.get('successSounds')) {
+    } else if (freshWarn) {
+        if (diagTimer) clearTimeout(diagTimer);
+        diagTimer = setTimeout(() => { scream(extCtx, 'warning'); diagTimer = null; }, 200);
+    } else if (curErrs.size === 0 && lastUris.size > 0 && cfg.get('successSounds')) {
         scream(extCtx, 'success');
     }
-    lastUris = cur;
+
+    lastUris = curErrs;
+    lastWarns = curWarns;
 }
 
 let termBufs = new Map<any, string>();
@@ -123,12 +134,19 @@ async function monitor(ctx: vscode.ExtensionContext, exec: any) {
             termBufs.set(exec, b);
 
             const cln = b.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').toLowerCase();
-            const errs = ['error:', 'fatal', 'failed', 'npm err!', 'exit code 1', 'exception', 'uncaught', 'rejected', 'traceback', 'stack trace', 'cannot find symbol', 'compilation error'];
             
+            const errs = ['error:', 'fatal', 'failed', 'npm err!', 'exit code 1', 'exception', 'uncaught', 'rejected', 'traceback', 'stack trace', 'cannot find symbol', 'compilation error'];
+            const warns = ['warning:', 'warn:', 'npm warn'];
+
             if (errs.some(k => cln.includes(k))) {
                 termBufs.delete(exec);
                 scream(ctx, 'error');
-                return; // Only scream once per execution
+                return;
+            }
+            if (warns.some(k => cln.includes(k))) {
+                termBufs.delete(exec);
+                scream(ctx, 'warning');
+                return;
             }
         }
     } catch (e) {}
@@ -152,17 +170,31 @@ export function activate(ctx: vscode.ExtensionContext) {
     }));
 
     if (typeof (vscode.window as any).onDidStartTerminalShellExecution === 'function') {
+        const startTimes = new Map<any, number>();
+
         ctx.subscriptions.push((vscode.window as any).onDidStartTerminalShellExecution((e: any) => {
+            startTimes.set(e.execution, Date.now());
             monitor(ctx, e.execution);
         }));
 
         ctx.subscriptions.push((vscode.window as any).onDidEndTerminalShellExecution((e: any) => {
+            const duration = Date.now() - (startTimes.get(e.execution) || 0);
+            startTimes.delete(e.execution);
             termBufs.delete(e.execution);
+
             const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
-            if (e.exitCode !== undefined && e.exitCode !== 0 && cfg.get('enabled')) {
+            if (!cfg.get('enabled')) return;
+
+            if (e.exitCode !== undefined && e.exitCode !== 0) {
                 scream(ctx, 'error');
-            } else if (e.exitCode === 0 && cfg.get('enabled') && cfg.get('successSounds')) {
-                scream(ctx, 'success');
+            } else if (e.exitCode === 0 && cfg.get('successSounds')) {
+                const cmd = (e.execution.commandLine?.value || '').toLowerCase();
+                const buildCmds = ['java', 'javac', 'npm', 'node', 'python', 'gcc', 'g++', 'cargo', 'go', 'make', 'cmake', 'dotnet'];
+                const isBuild = buildCmds.some(k => cmd.includes(k));
+                
+                if (isBuild || duration > 1000) {
+                    scream(ctx, 'success');
+                }
             }
         }));
     }
