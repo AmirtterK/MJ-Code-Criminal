@@ -12,12 +12,12 @@ interface Clip {
 }
 
 const ERRORS: Clip[] = [
-    { label: 'Shamone', text: 'Shamone!', audio: 'shamo.mp3' },
-    { label: 'Ow', text: 'Ow!', audio: 'aaow.mp3' },
     { label: 'Hee Hee', text: 'Hee hee!', audio: 'hee-hee.mp3' },
     { label: 'Hoooo', text: 'Hooo...', audio: 'hoooo.mp3' },
+    { label: 'Ow', text: 'Ow!', audio: 'aaow.mp3' },
+    { label: 'Shamone', text: 'Shamone!', audio: 'shamo.mp3' },
     { label: 'Bad', text: "You know I'm bad — and so is your code.", audio: 'shamo.mp3' },
-    { label: 'Smooth Criminal', text: 'As he came into the file... errors everywhere.', audio: 'aaow.mp3' },
+    { label: 'Smooth Criminal', text: 'As he came into the file... it was a code criminal.', audio: 'aaow.mp3' },
     { label: 'Billie Jean', text: 'Billie Jean is not my lover... but this error is yours.', audio: 'hee-hee.mp3' },
     { label: 'Beat It', text: 'Just beat it — fix it!', audio: 'hoooo.mp3' },
 ];
@@ -63,9 +63,20 @@ function scream(ctx: vscode.ExtensionContext, t: string, o?: Clip) {
     const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
     if (!cfg.get('enabled')) return;
 
-    const c = o || (t === 'error' ? ERRORS[Math.floor(Math.random() * ERRORS.length)] : SUCCESSES[Math.floor(Math.random() * SUCCESSES.length)]);
-    const vol = cfg.get<number>('volume', 1.0);
+    let c: Clip;
+    if (o) {
+        c = o;
+    } else if (t === 'error') {
+        const r = Math.random();
+        if (r < 0.25) c = ERRORS[0]; // Hee Hee
+        else if (r < 0.50) c = ERRORS[1]; // Hoooo
+        else if (r < 0.75) c = ERRORS[2]; // Ow
+        else c = ERRORS[3 + Math.floor(Math.random() * 5)]; // Others (5% each)
+    } else {
+        c = SUCCESSES[Math.floor(Math.random() * SUCCESSES.length)];
+    }
 
+    const vol = cfg.get<number>('volume', 1.0);
     if (c.audio) play(path.join(ctx.extensionPath, 'audio', c.audio), vol);
 
     vscode.window.setStatusBarMessage(`MJ: ${c.text}`, 5000);
