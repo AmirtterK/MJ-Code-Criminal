@@ -32,6 +32,22 @@ var __importStar = (this && this.__importStar) || (function () {
         return result;
     };
 })();
+var __awaiter = (this && this.__awaiter) || function (thisArg, _arguments, P, generator) {
+    function adopt(value) { return value instanceof P ? value : new P(function (resolve) { resolve(value); }); }
+    return new (P || (P = Promise))(function (resolve, reject) {
+        function fulfilled(value) { try { step(generator.next(value)); } catch (e) { reject(e); } }
+        function rejected(value) { try { step(generator["throw"](value)); } catch (e) { reject(e); } }
+        function step(result) { result.done ? resolve(result.value) : adopt(result.value).then(fulfilled, rejected); }
+        step((generator = generator.apply(thisArg, _arguments || [])).next());
+    });
+};
+var __asyncValues = (this && this.__asyncValues) || function (o) {
+    if (!Symbol.asyncIterator) throw new TypeError("Symbol.asyncIterator is not defined.");
+    var m = o[Symbol.asyncIterator], i;
+    return m ? m.call(o) : (o = typeof __values === "function" ? __values(o) : o[Symbol.iterator](), i = {}, verb("next"), verb("throw"), verb("return"), i[Symbol.asyncIterator] = function () { return this; }, i);
+    function verb(n) { i[n] = o[n] && function (v) { return new Promise(function (resolve, reject) { v = o[n](v), settle(resolve, reject, v.done, v.value); }); }; }
+    function settle(resolve, reject, d, v) { Promise.resolve(v).then(function(v) { resolve({ value: v, done: d }); }, reject); }
+};
 Object.defineProperty(exports, "__esModule", { value: true });
 exports.activate = activate;
 exports.deactivate = deactivate;
@@ -58,9 +74,8 @@ const SUCCESSES = [
     { label: 'Heal the World', text: 'Heal the world — zero errors!', audio: null },
 ];
 let statusBar;
-let errorTimer = null;
+let diagTimer = null;
 let lastUris = new Set();
-let termBuf = '';
 let lastScream = 0;
 let activeProc = null;
 function q(v) {
@@ -85,7 +100,7 @@ function play(p, v) {
 }
 function scream(ctx, t, o) {
     const now = Date.now();
-    if (now - lastScream < 1500 && !o)
+    if (now - lastScream < 200 && !o)
         return;
     lastScream = now;
     const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
@@ -99,6 +114,35 @@ function scream(ctx, t, o) {
     if (statusBar) {
         statusBar.text = t === 'error' ? `$(error) MJ: ${c.label}` : `$(check) MJ: ${c.label}`;
     }
+}
+function monitor(ctx, exec) {
+    return __awaiter(this, void 0, void 0, function* () {
+        var _a, e_1, _b, _c;
+        let played = false;
+        try {
+            try {
+                for (var _d = true, _e = __asyncValues(exec.read()), _f; _f = yield _e.next(), _a = _f.done, !_a; _d = true) {
+                    _c = _f.value;
+                    _d = false;
+                    const chunk = _c;
+                    const cln = chunk.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').toLowerCase();
+                    const errs = ['error:', 'fatal error:', 'build failed', 'npm err!', 'exit code 1', 'failed'];
+                    if (errs.some(k => cln.includes(k)) && !played) {
+                        played = true;
+                        scream(ctx, 'error');
+                    }
+                }
+            }
+            catch (e_1_1) { e_1 = { error: e_1_1 }; }
+            finally {
+                try {
+                    if (!_d && !_a && (_b = _e.return)) yield _b.call(_e);
+                }
+                finally { if (e_1) throw e_1.error; }
+            }
+        }
+        catch (e) { }
+    });
 }
 function activate(ctx) {
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
@@ -123,33 +167,26 @@ function activate(ctx) {
             });
         });
         if (fresh) {
-            if (errorTimer)
-                clearTimeout(errorTimer);
-            errorTimer = setTimeout(() => { scream(ctx, 'error'); errorTimer = null; }, 1200);
+            if (diagTimer)
+                clearTimeout(diagTimer);
+            diagTimer = setTimeout(() => { scream(ctx, 'error'); diagTimer = null; }, 200);
         }
         else if (cur.size === 0 && lastUris.size > 0 && cfg.get('successSounds')) {
             scream(ctx, 'success');
         }
         lastUris = cur;
     }));
-    if (typeof vscode.window.onDidWriteTerminalData === 'function') {
-        ctx.subscriptions.push(vscode.window.onDidWriteTerminalData((e) => {
+    if (typeof vscode.window.onDidStartTerminalShellExecution === 'function') {
+        ctx.subscriptions.push(vscode.window.onDidStartTerminalShellExecution((e) => {
+            monitor(ctx, e.execution);
+        }));
+        ctx.subscriptions.push(vscode.window.onDidEndTerminalShellExecution((e) => {
             const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
-            if (!cfg.get('enabled'))
-                return;
-            termBuf = (termBuf + e.data).slice(-2000);
-            const cln = termBuf.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').toLowerCase();
-            const errs = ['error:', 'fatal error:', 'build failed', 'npm err!', 'exit code 1'];
-            const ok = ['successfully compiled', 'build successful', 'done in'];
-            if (errs.some(k => cln.includes(k)) && !errorTimer) {
+            if (e.exitCode !== undefined && e.exitCode !== 0 && cfg.get('enabled')) {
                 scream(ctx, 'error');
-                errorTimer = setTimeout(() => { errorTimer = null; }, 1000);
-                termBuf = '';
             }
-            else if (ok.some(k => cln.includes(k) && cfg.get('successSounds')) && !errorTimer) {
+            else if (e.exitCode === 0 && cfg.get('enabled') && cfg.get('successSounds')) {
                 scream(ctx, 'success');
-                errorTimer = setTimeout(() => { errorTimer = null; }, 1000);
-                termBuf = '';
             }
         }));
     }

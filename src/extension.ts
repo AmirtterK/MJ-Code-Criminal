@@ -31,9 +31,8 @@ const SUCCESSES: Clip[] = [
 ];
 
 let statusBar: vscode.StatusBarItem;
-let errorTimer: NodeJS.Timeout | null = null;
+let diagTimer: NodeJS.Timeout | null = null;
 let lastUris = new Set<string>();
-let termBuf = '';
 let lastScream = 0;
 let activeProc: any = null;
 
@@ -58,7 +57,7 @@ function play(p: string, v: number) {
 
 function scream(ctx: vscode.ExtensionContext, t: string, o?: Clip) {
     const now = Date.now();
-    if (now - lastScream < 1500 && !o) return;
+    if (now - lastScream < 200 && !o) return;
     lastScream = now;
 
     const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
@@ -73,6 +72,20 @@ function scream(ctx: vscode.ExtensionContext, t: string, o?: Clip) {
     if (statusBar) {
         statusBar.text = t === 'error' ? `$(error) MJ: ${c.label}` : `$(check) MJ: ${c.label}`;
     }
+}
+
+async function monitor(ctx: vscode.ExtensionContext, exec: any) {
+    let played = false;
+    try {
+        for await (const chunk of exec.read()) {
+            const cln = chunk.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').toLowerCase();
+            const errs = ['error:', 'fatal error:', 'build failed', 'npm err!', 'exit code 1', 'failed'];
+            if (errs.some(k => cln.includes(k)) && !played) {
+                played = true;
+                scream(ctx, 'error');
+            }
+        }
+    } catch (e) {}
 }
 
 export function activate(ctx: vscode.ExtensionContext) {
@@ -100,32 +113,25 @@ export function activate(ctx: vscode.ExtensionContext) {
         });
 
         if (fresh) {
-            if (errorTimer) clearTimeout(errorTimer);
-            errorTimer = setTimeout(() => { scream(ctx, 'error'); errorTimer = null; }, 1200);
+            if (diagTimer) clearTimeout(diagTimer);
+            diagTimer = setTimeout(() => { scream(ctx, 'error'); diagTimer = null; }, 200);
         } else if (cur.size === 0 && lastUris.size > 0 && cfg.get('successSounds')) {
             scream(ctx, 'success');
         }
         lastUris = cur;
     }));
 
-    if (typeof (vscode.window as any).onDidWriteTerminalData === 'function') {
-        ctx.subscriptions.push((vscode.window as any).onDidWriteTerminalData((e: any) => {
+    if (typeof (vscode.window as any).onDidStartTerminalShellExecution === 'function') {
+        ctx.subscriptions.push((vscode.window as any).onDidStartTerminalShellExecution((e: any) => {
+            monitor(ctx, e.execution);
+        }));
+
+        ctx.subscriptions.push((vscode.window as any).onDidEndTerminalShellExecution((e: any) => {
             const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
-            if (!cfg.get('enabled')) return;
-
-            termBuf = (termBuf + e.data).slice(-2000);
-            const cln = termBuf.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').toLowerCase();
-            const errs = ['error:', 'fatal error:', 'build failed', 'npm err!', 'exit code 1'];
-            const ok = ['successfully compiled', 'build successful', 'done in'];
-
-            if (errs.some(k => cln.includes(k)) && !errorTimer) {
+            if (e.exitCode !== undefined && e.exitCode !== 0 && cfg.get('enabled')) {
                 scream(ctx, 'error');
-                errorTimer = setTimeout(() => { errorTimer = null; }, 1000);
-                termBuf = '';
-            } else if (ok.some(k => cln.includes(k) && cfg.get('successSounds')) && !errorTimer) {
+            } else if (e.exitCode === 0 && cfg.get('enabled') && cfg.get('successSounds')) {
                 scream(ctx, 'success');
-                errorTimer = setTimeout(() => { errorTimer = null; }, 1000);
-                termBuf = '';
             }
         }));
     }
