@@ -49,9 +49,23 @@ function play(p: string, v: number) {
     if (activeProc) {
         try { activeProc.kill(); } catch (e) {}
     }
-    const vol = Math.max(0, Math.min(1, v)).toFixed(2);
-    const ps = `Add-Type -AssemblyName PresentationCore;$m=New-Object System.Windows.Media.MediaPlayer;$m.Volume=${vol};$m.Open([Uri]::new('${q(p)}'));$m.Play();$d=(Get-Date).AddMilliseconds(100);while(-not $m.NaturalDuration.HasTimeSpan -and (Get-Date) -lt $d){Start-Sleep -Milliseconds 10};$w=2000;if($m.NaturalDuration.HasTimeSpan){$w=[Math]::Min(12000,[Math]::Max(200,[int]([Math]::Ceiling($m.NaturalDuration.TimeSpan.TotalMilliseconds)+500)))};Start-Sleep -Milliseconds $w;$m.Stop();$m.Close();`;
-    activeProc = spawn("powershell", ["-NoProfile", "-NonInteractive", "-STA", "-ExecutionPolicy", "Bypass", "-Command", ps], { stdio: 'ignore', windowsHide: true });
+    const ps = `
+    $c = @"
+    using System;
+    using System.Runtime.InteropServices;
+    public class M {
+        [DllImport("winmm.dll")]
+        public static extern long mciSendString(string cmd, System.Text.StringBuilder rev, int len, IntPtr h);
+    }
+"@
+    Add-Type -TypeDefinition $c
+    $p = "${q(p)}"
+    [M]::mciSendString("open \\"$p\\" type mpegvideo alias s", $null, 0, [IntPtr]::Zero)
+    [M]::mciSendString("setaudio s volume to 1000", $null, 0, [IntPtr]::Zero)
+    [M]::mciSendString("play s wait", $null, 0, [IntPtr]::Zero)
+    [M]::mciSendString("close s", $null, 0, [IntPtr]::Zero)
+    `;
+    activeProc = spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: 'ignore', windowsHide: true });
     activeProc.on('exit', () => { activeProc = null; });
 }
 
@@ -85,51 +99,70 @@ function scream(ctx: vscode.ExtensionContext, t: string, o?: Clip) {
     }
 }
 
+let extCtx: vscode.ExtensionContext;
+
+function scan() {
+    const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
+    if (!cfg.get('enabled')) return;
+
+    const cur = new Set<string>();
+    let fresh = false;
+
+    vscode.workspace.textDocuments.forEach(d => {
+        vscode.languages.getDiagnostics(d.uri).forEach(x => {
+            if (x.severity === vscode.DiagnosticSeverity.Error) {
+                const k = `${d.uri.toString()}:${x.range.start.line}:${x.range.start.character}`;
+                cur.add(k);
+                if (!lastUris.has(k)) fresh = true;
+            }
+        });
+    });
+
+    if (fresh) {
+        if (diagTimer) clearTimeout(diagTimer);
+        diagTimer = setTimeout(() => { scream(extCtx, 'error'); diagTimer = null; }, 200);
+    } else if (cur.size === 0 && lastUris.size > 0 && cfg.get('successSounds')) {
+        scream(extCtx, 'success');
+    }
+    lastUris = cur;
+}
+
+let termBufs = new Map<any, string>();
+
 async function monitor(ctx: vscode.ExtensionContext, exec: any) {
-    let played = false;
     try {
         for await (const chunk of exec.read()) {
-            const cln = chunk.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').toLowerCase();
-            const errs = ['error:', 'fatal error:', 'build failed', 'npm err!', 'exit code 1', 'failed'];
-            if (errs.some(k => cln.includes(k)) && !played) {
-                played = true;
+            let b = (termBufs.get(exec) || '') + chunk;
+            b = b.slice(-1000);
+            termBufs.set(exec, b);
+
+            const cln = b.replace(/[\u001b\u009b][[()#;?]*(?:[0-9]{1,4}(?:;[0-9]{0,4})*)?[0-9A-ORZcf-nqry=><]/g, '').toLowerCase();
+            const errs = ['error:', 'fatal', 'failed', 'npm err!', 'exit code 1', 'exception', 'uncaught', 'rejected', 'traceback', 'stack trace', 'cannot find symbol', 'compilation error'];
+            
+            if (errs.some(k => cln.includes(k))) {
+                termBufs.delete(exec);
                 scream(ctx, 'error');
+                return; // Only scream once per execution
             }
         }
     } catch (e) {}
 }
 
 export function activate(ctx: vscode.ExtensionContext) {
+    extCtx = ctx;
     statusBar = vscode.window.createStatusBarItem(vscode.StatusBarAlignment.Right, 100);
     statusBar.text = 'MJ Ready';
     statusBar.command = 'mj-code-criminal.toggle';
     statusBar.show();
     ctx.subscriptions.push(statusBar);
 
-    ctx.subscriptions.push(vscode.languages.onDidChangeDiagnostics(() => {
-        const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
-        if (!cfg.get('enabled')) return;
+    // Pre-warm audio engine
+    spawn("powershell", ["-NoProfile", "-NonInteractive", "-Command", "Add-Type -AssemblyName PresentationCore"], { stdio: 'ignore', windowsHide: true });
 
-        const cur = new Set<string>();
-        let fresh = false;
-
-        vscode.workspace.textDocuments.forEach(d => {
-            vscode.languages.getDiagnostics(d.uri).forEach(x => {
-                if (x.severity === vscode.DiagnosticSeverity.Error) {
-                    const k = `${d.uri.toString()}:${x.range.start.line}:${x.range.start.character}`;
-                    cur.add(k);
-                    if (!lastUris.has(k)) fresh = true;
-                }
-            });
-        });
-
-        if (fresh) {
-            if (diagTimer) clearTimeout(diagTimer);
-            diagTimer = setTimeout(() => { scream(ctx, 'error'); diagTimer = null; }, 200);
-        } else if (cur.size === 0 && lastUris.size > 0 && cfg.get('successSounds')) {
-            scream(ctx, 'success');
-        }
-        lastUris = cur;
+    ctx.subscriptions.push(vscode.languages.onDidChangeDiagnostics(scan));
+    ctx.subscriptions.push(vscode.window.onDidChangeActiveTextEditor(scan));
+    ctx.subscriptions.push(vscode.workspace.onDidChangeTextDocument(e => {
+        if (e.contentChanges.length > 0) scan();
     }));
 
     if (typeof (vscode.window as any).onDidStartTerminalShellExecution === 'function') {
@@ -138,6 +171,7 @@ export function activate(ctx: vscode.ExtensionContext) {
         }));
 
         ctx.subscriptions.push((vscode.window as any).onDidEndTerminalShellExecution((e: any) => {
+            termBufs.delete(e.execution);
             const cfg = vscode.workspace.getConfiguration('mjCodeCriminal');
             if (e.exitCode !== undefined && e.exitCode !== 0 && cfg.get('enabled')) {
                 scream(ctx, 'error');
@@ -157,7 +191,8 @@ export function activate(ctx: vscode.ExtensionContext) {
             statusBar.text = !now ? 'MJ Active' : 'MJ Off';
         })
     );
+    
+    scan(); // Initial scan
 }
 
 export function deactivate() {}
-
