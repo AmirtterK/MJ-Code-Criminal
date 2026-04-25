@@ -1,0 +1,86 @@
+{
+  "name": "mj-code-criminal",
+  "displayName": "MJ Code Criminal",
+  "description": "As he came into the file... it was a code criminal. MJ voice clips on build errors.",
+  "version": "1.0.1",
+  "publisher": "amirtterk",
+  "author": {
+    "name": "AmirtterK"
+  },
+  "license": "MIT",
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/amirtterk/mj-code-criminal"
+  },
+  "icon": "logo.png",
+  "engines": {
+    "vscode": "^1.90.0"
+  },
+  "homepage": "https://github.com/amirtterk/mj-code-criminal",
+  "bugs": {
+    "url": "https://github.com/amirtterk/mj-code-criminal/issues"
+  },
+  "categories": [
+    "Other"
+  ],
+  "keywords": [
+    "fun",
+    "audio",
+    "build",
+    "error",
+    "michael jackson",
+    "mj"
+  ],
+  "activationEvents": [
+    "onStartupFinished"
+  ],
+  "main": "./out/extension.js",
+  "scripts": {
+    "vscode:prepublish": "npm run compile",
+    "compile": "tsc -p ./",
+    "watch": "tsc -watch -p ./"
+  },
+  "contributes": {
+    "commands": [
+      {
+        "command": "mj-code-criminal.testError",
+        "title": "MJ: Test Error Sound"
+      },
+      {
+        "command": "mj-code-criminal.testSuccess",
+        "title": "MJ: Test Success Sound"
+      },
+      {
+        "command": "mj-code-criminal.toggle",
+        "title": "MJ: Toggle On/Off"
+      }
+    ],
+    "configuration": {
+      "title": "MJ Code Criminal",
+      "properties": {
+        "mjCodeCriminal.enabled": {
+          "type": "boolean",
+          "default": true,
+          "description": "Enable or disable MJ Code Criminal."
+        },
+        "mjCodeCriminal.volume": {
+          "type": "number",
+          "default": 1.0,
+          "minimum": 0,
+          "maximum": 1,
+          "description": "Playback volume from 0.0 to 1.0."
+        },
+        "mjCodeCriminal.successSounds": {
+          "type": "boolean",
+          "default": true,
+          "description": "Play a sound when errors are cleared."
+        }
+      }
+    }
+  },
+  "devDependencies": {
+    "@types/node": "^18.11.18",
+    "@types/vscode": "^1.80.0",
+    "typescript": "^5.0.4"
+  }
+}
