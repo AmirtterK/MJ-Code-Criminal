@@ -61,17 +61,17 @@ const ERRORS = [
     { label: 'Hoooo', text: 'Hooo...', audio: 'hoooo.mp3' },
     { label: 'Ow', text: 'Ow!', audio: 'aaow.mp3' },
     { label: 'Shamone', text: 'Shamone!', audio: 'shamo.mp3' },
-    { label: 'Bad', text: "You know I'm bad — and so is your code.", audio: 'shamo.mp3' },
+    { label: 'Bad', text: "You know I'm bad - and so is your code.", audio: 'shamo.mp3' },
     { label: 'Smooth Criminal', text: 'As he came into the file... it was a code criminal.', audio: 'aaow.mp3' },
     { label: 'Billie Jean', text: 'Billie Jean is not my lover... but this error is yours.', audio: 'hee-hee.mp3' },
-    { label: 'Beat It', text: 'Just beat it — fix it!', audio: 'hoooo.mp3' },
+    { label: 'Beat It', text: 'Just beat it - fix it!', audio: 'hoooo.mp3' },
 ];
 const SUCCESSES = [
-    { label: 'PYT', text: 'P-Y-T, pretty young thing — clean build!', audio: null },
+    { label: 'PYT', text: 'P-Y-T, pretty young thing - clean build!', audio: null },
     { label: 'Wanna Be Startin', text: "Wanna be startin somethin... well, it compiled!", audio: null },
-    { label: 'Rock With You', text: 'Rock with you... all night — build passed!', audio: null },
+    { label: 'Rock With You', text: 'Rock with you... all night - build passed!', audio: null },
     { label: 'Earth Song', text: 'The earth sings... your build is green.', audio: null },
-    { label: 'Heal the World', text: 'Heal the world — zero errors!', audio: null },
+    { label: 'Heal the World', text: 'Heal the world - zero errors!', audio: null },
 ];
 let statusBar;
 let diagTimer = null;
@@ -93,22 +93,8 @@ function play(p, v) {
         }
         catch (e) { }
     }
-    const ps = `
-    $c = @"
-    using System;
-    using System.Runtime.InteropServices;
-    public class M {
-        [DllImport("winmm.dll")]
-        public static extern long mciSendString(string cmd, System.Text.StringBuilder rev, int len, IntPtr h);
-    }
-"@
-    Add-Type -TypeDefinition $c
-    $p = "${q(p)}"
-    [M]::mciSendString("open \\"$p\\" type mpegvideo alias s", $null, 0, [IntPtr]::Zero)
-    [M]::mciSendString("setaudio s volume to 1000", $null, 0, [IntPtr]::Zero)
-    [M]::mciSendString("play s wait", $null, 0, [IntPtr]::Zero)
-    [M]::mciSendString("close s", $null, 0, [IntPtr]::Zero)
-    `;
+    const vol = Math.max(0, Math.min(1, v)).toFixed(2);
+    const ps = `Add-Type -AssemblyName PresentationCore;$m=New-Object System.Windows.Media.MediaPlayer;$m.Volume=${vol};$m.Open([Uri]::new('${q(p)}'));$m.Play();$d=(Get-Date).AddMilliseconds(100);while(-not $m.NaturalDuration.HasTimeSpan -and (Get-Date) -lt $d){Start-Sleep -Milliseconds 10};$w=2000;if($m.NaturalDuration.HasTimeSpan){$w=[Math]::Min(12000,[Math]::Max(200,[int]([Math]::Ceiling($m.NaturalDuration.TimeSpan.TotalMilliseconds)+500)))};Start-Sleep -Milliseconds $w;$m.Stop();$m.Close();`;
     activeProc = (0, child_process_1.spawn)("powershell", ["-NoProfile", "-NonInteractive", "-Command", ps], { stdio: 'ignore', windowsHide: true });
     activeProc.on('exit', () => { activeProc = null; });
 }
